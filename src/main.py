@@ -11,8 +11,7 @@ DB_CONFIG = "dbname=virtualTeacher user=postgres password=password host=localhos
 conn = psycopg2.connect(DB_CONFIG)
 cursor = conn.cursor()
 
-api_key = "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"
-
+api_key = "api-key"
 # Load PhoBERT model & tokenizer
 phobert = AutoModel.from_pretrained("vinai/phobert-large").to("cuda")
 tokenizer = AutoTokenizer.from_pretrained("vinai/phobert-large")
