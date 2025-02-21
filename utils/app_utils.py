@@ -10,10 +10,11 @@ import time
 from transformers import AutoModel, AutoTokenizer
 from faster_whisper import WhisperModel
 
+
 api_key = "api_key"
 
 # Database connection
-DB_CONFIG = "dbname=virtualTeacher user=postgres password=password host=localhost"
+DB_CONFIG = "dbname=virtualTeacher user=postgres password=password host=192.168.1.131"
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 # Load PhoBERT model & tokenizer
@@ -66,24 +67,58 @@ def search_similar_question(user_embedding):
     return None, None
 
 
-def search_similar_reflection(user_embedding):
-    """Retrieves the most similar past reflection using PGVector (without threshold)"""
+
+
+def search_best_match(user_embedding):
+    """Tìm câu hỏi tương đồng nhất trong cả chat_history và reflections và lấy câu trả lời từ bảng có độ tương đồng cao hơn"""
     conn = psycopg2.connect(DB_CONFIG)
     cursor = conn.cursor()
 
     embedding_str = "[" + ",".join(map(str, user_embedding)) + "]"
+
+    # Tìm câu hỏi tương đồng nhất trong chat_history
     cursor.execute("""
-        SELECT reflection_text, reflection_id
-        FROM reflections
-        ORDER BY embedding <-> %s::vector
+        SELECT h.message, h.chat_id, e.embedding <-> %s::vector AS distance
+        FROM chat_history h
+        JOIN chat_embeddings e ON h.chat_id = e.chat_id
+        WHERE h.role = 'user'
+        ORDER BY distance ASC
         LIMIT 1;
     """, (embedding_str,))
+    chat_result = cursor.fetchone()
 
-    result = cursor.fetchone()
+    # Tìm câu hỏi tương đồng nhất trong reflections
+    cursor.execute("""
+        SELECT r.reflection_text, r.reflection_id, r.embedding <-> %s::vector AS distance
+        FROM reflections r
+        ORDER BY distance ASC
+        LIMIT 1;
+    """, (embedding_str,))
+    reflection_result = cursor.fetchone()
+
     cursor.close()
     conn.close()
 
-    return result if result else (None, None)  # Always return the top match
+    # Kiểm tra nếu cả hai bảng đều có kết quả
+    if chat_result and reflection_result:
+        chat_text, chat_id, chat_distance = chat_result
+        reflection_text, reflection_id, reflection_distance = reflection_result
+
+        # Nếu chat_history có độ tương đồng cao hơn (distance nhỏ hơn)
+        if chat_distance < reflection_distance:
+            return chat_text, "chat_history", chat_id, chat_distance
+        else:  # reflections có độ tương đồng cao hơn
+            return reflection_text, "reflections", reflection_id, reflection_distance
+
+    # Nếu chỉ có kết quả từ chat_history
+    elif chat_result:
+        return chat_result[0], "chat_history", chat_result[1], chat_result[2]
+
+    # Nếu chỉ có kết quả từ reflections
+    elif reflection_result:
+        return reflection_result[0], "reflections", reflection_result[1], reflection_result[2]
+
+    return None, None, None, None  # Không tìm thấy câu hỏi tương đồng
 
 
 def get_stored_response(chat_id):
